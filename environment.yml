@@ -1,0 +1,6 @@
+name: cdim
+channels:
+  - defaults
+dependencies:
+  - python=3.11.5
+prefix: /gscratch/realitylab/vjayaram/miniconda3/envs/cdim
