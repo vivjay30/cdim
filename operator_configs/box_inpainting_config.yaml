@@ -1,0 +1,5 @@
+name: box_inpainting
+box_size: 128
+height: 256
+width: 256
+channels: 3
