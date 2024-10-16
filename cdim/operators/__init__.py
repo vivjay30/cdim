@@ -21,4 +21,5 @@ def get_operator(name: str, **kwargs):
 
 # Import everything to make sure they register
 from .random_box_masker import RandomBoxMasker
+from .random_pixel_masker import RandomPixelMasker
 from .identity_operator import IdentityOperator

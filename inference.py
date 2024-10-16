@@ -1,6 +1,7 @@
 import argparse
 import os
 import yaml
+import time
 
 from PIL import Image
 import numpy as np
@@ -9,7 +10,11 @@ import torch
 from cdim.noise import get_noise
 from cdim.operators import get_operator
 from cdim.image_utils import save_to_image
+from cdim.dps_model.dps_unet import create_model
+from cdim.diffusion.scheduling_ddim import DDIMScheduler
+from cdim.diffusion.diffusion_pipeline import run_diffusion
 
+torch.manual_seed(8)
 
 def load_image(path):
     """
@@ -40,16 +45,42 @@ def main(args):
     # Load the noise function
     noise_config = load_yaml(args.noise_config)
     noise_function = get_noise(**noise_config)
-    print(noise_function)    
 
     # Load the measurement function A
     operator_config = load_yaml(args.operator_config)
     operator_config["device"] = device
     operator = get_operator(**operator_config)
-    print(operator)
+
+    # Load the model
+    model_config = load_yaml(args.model_config)
+    model = create_model(**model_config)
+    model = model.to(device)
+    model.eval()
+
+    # All the models have the same scheduler.
+    # you can change this for different models
+    ddim_scheduler = DDIMScheduler(
+        num_train_timesteps=1000,
+        beta_start=0.0001,
+        beta_end=0.02,
+        beta_schedule="linear",
+        prediction_type="epsilon",
+        timestep_spacing="leading",
+        steps_offset=0,
+    )
 
     noisy_measurement = noise_function(operator(original_image))
     save_to_image(noisy_measurement, os.path.join(args.output_dir, "noisy_measurement.png"))
+
+    t0 = time.time()
+    output_image = run_diffusion(
+        model, ddim_scheduler,
+        noisy_measurement, operator, noise_function, device,
+        num_inference_steps=args.T,
+        K=args.K)
+    print(f"total time {time.time() - t0}")
+
+    save_to_image(output_image, os.path.join(args.output_dir, "output.png"))
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -59,6 +90,7 @@ if __name__ == '__main__':
     parser.add_argument("model", type=str)
     parser.add_argument("operator_config", type=str)
     parser.add_argument("noise_config", type=str)
+    parser.add_argument("model_config", type=str)
     parser.add_argument("--output-dir", default=".", type=str)
     parser.add_argument("--cuda", default=True, action=argparse.BooleanOptionalAction)
 

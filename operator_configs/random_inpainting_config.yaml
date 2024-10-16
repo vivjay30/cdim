@@ -1,0 +1,5 @@
+name: random_inpainting
+fraction: 0.08  # Fraction of pixels to keep
+height: 256
+width: 256
+channels: 3

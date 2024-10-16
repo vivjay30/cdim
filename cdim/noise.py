@@ -33,18 +33,20 @@ class Noise(ABC):
 @register_noise(name='gaussian')
 class GaussianNoise(Noise):
     def __init__(self, sigma):
-        self.sigma = sigma
-    
-    def __call__(self, data):
         # Important! We scale sigma by 2 because the config assumes images are in [0, 1]
         # but actually this model uses images in [-1, 1]
-        return data + torch.randn_like(data, device=data.device) * self.sigma * 2
+        self.sigma = 2 * sigma
+        self.name = 'gaussian'
+    
+    def __call__(self, data):
+        return data + torch.randn_like(data, device=data.device) * self.sigma
 
 
 @register_noise(name='poisson')
 class PoissonNoise(Noise):
     def __init__(self, rate):
         self.rate = rate
+        self.name = 'poisson'
 
     def __call__(self, data):
         import numpy as np
