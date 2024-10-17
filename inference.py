@@ -7,6 +7,8 @@ from PIL import Image
 import numpy as np
 import torch
 
+from diffusers import DiffusionPipeline
+
 from cdim.noise import get_noise
 from cdim.operators import get_operator
 from cdim.image_utils import save_to_image
@@ -51,11 +53,18 @@ def main(args):
     operator_config["device"] = device
     operator = get_operator(**operator_config)
 
-    # Load the model
-    model_config = load_yaml(args.model_config)
-    model = create_model(**model_config)
-    model = model.to(device)
-    model.eval()
+    if args.model_config.endswith(".yaml"):
+        # Local model from DPS
+        model_type = "dps"
+        model_config = load_yaml(args.model_config)
+        model = create_model(**model_config)
+        model = model.to(device)
+        model.eval()
+
+    else:
+        # Huggingface diffusers model
+        model_type = "diffusers"
+        model = DiffusionPipeline.from_pretrained(args.model_config).to("cuda").unet
 
     # All the models have the same scheduler.
     # you can change this for different models
@@ -77,7 +86,8 @@ def main(args):
         model, ddim_scheduler,
         noisy_measurement, operator, noise_function, device,
         num_inference_steps=args.T,
-        K=args.K)
+        K=args.K,
+        model_type=model_type)
     print(f"total time {time.time() - t0}")
 
     save_to_image(output_image, os.path.join(args.output_dir, "output.png"))

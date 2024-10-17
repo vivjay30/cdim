@@ -1,2 +1,5 @@
+diffusers==0.30.3
 numpy==2.1.2
 Pillow==11.0.0
+PyYAML==6.0.2
+tqdm==4.66.5

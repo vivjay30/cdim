@@ -15,7 +15,8 @@ def run_diffusion(
         num_inference_steps: int = 1000,
         K=5,
         image_dim=256,
-        image_channels=3
+        image_channels=3,
+        model_type="diffusers"
     ):
     batch_size = noisy_observation.shape[0]
     image_shape = (batch_size, image_channels, image_dim, image_dim)
@@ -26,7 +27,8 @@ def run_diffusion(
 
     for i, t in tqdm(enumerate(scheduler.timesteps), total=len(scheduler.timesteps), desc="Processing timesteps"):
          # 1. predict noise model_output
-        model_output = model(image, t.unsqueeze(0).to(device))[:, :3]
+        model_output = model(image, t.unsqueeze(0).to(device))
+        model_output = model_output.sample if model_type == "diffusers" else model_output[:, :3]
 
         # 2. compute previous image: x_t -> x_t-1
         image = scheduler.step(model_output, t, image).prev_sample
@@ -38,7 +40,8 @@ def run_diffusion(
 
             with torch.enable_grad():
                 # Calculate x^hat_0
-                model_output = model(image, (t - t_skip).unsqueeze(0).to(device))[:, :3]
+                model_output = model(image, (t - t_skip).unsqueeze(0).to(device))
+                model_output = model_output.sample if model_type == "diffusers" else model_output[:, :3]
                 x_0 = (image - beta_prod_t_prev ** (0.5) * model_output) / alpha_prod_t_prev ** (0.5)
 
                 distance = operator(x_0) - noisy_observation
@@ -48,6 +51,6 @@ def run_diffusion(
                 print(loss.mean())
                 loss.mean().backward()
 
-            image -= 10 / torch.linalg.norm(image.grad) * image.grad
+            image -= 15 / torch.linalg.norm(image.grad) * image.grad
 
     return image
