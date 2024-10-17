@@ -87,7 +87,8 @@ def main(args):
         noisy_measurement, operator, noise_function, device,
         num_inference_steps=args.T,
         K=args.K,
-        model_type=model_type)
+        model_type=model_type,
+        loss_type=args.loss)
     print(f"total time {time.time() - t0}")
 
     save_to_image(output_image, os.path.join(args.output_dir, "output.png"))
@@ -97,11 +98,14 @@ if __name__ == '__main__':
     parser.add_argument("input_image", type=str)
     parser.add_argument("T", type=int)
     parser.add_argument("K", type=int)
-    parser.add_argument("model", type=str)
     parser.add_argument("operator_config", type=str)
     parser.add_argument("noise_config", type=str)
     parser.add_argument("model_config", type=str)
     parser.add_argument("--output-dir", default=".", type=str)
+    parser.add_argument("--loss", type=str,
+        choices=['l2', 'kl', 'categorical_kl'], default='l2',
+        help="Algorithm to use. Options: 'l2', 'kl', 'categorical_kl'. Default is 'l2'."
+    )
     parser.add_argument("--cuda", default=True, action=argparse.BooleanOptionalAction)
 
     main(parser.parse_args())

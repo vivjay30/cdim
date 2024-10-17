@@ -2,6 +2,17 @@ import torch
 from tqdm import tqdm
 
 from cdim.image_utils import randn_tensor
+from cdim.discrete_kl_loss import discrete_kl_loss
+
+def compute_kl_gaussian(residuals, sigma):
+    # Only 0 centered for now
+    if sigma == 0:
+        raise ValueError("Can't do KL Divergence when sigma is 0")
+    sample_mean = (residuals).mean()
+    sample_var = (((residuals - sample_mean) **2).mean())
+    kl_div = torch.log(sample_var**0.5 / sigma) + (sigma**2 + sample_mean**2) / (2*sample_var) - 0.5
+    print(f"KL Divergence {kl_div}")
+    return kl_div
 
 
 @torch.no_grad()
@@ -16,7 +27,8 @@ def run_diffusion(
         K=5,
         image_dim=256,
         image_channels=3,
-        model_type="diffusers"
+        model_type="diffusers",
+        loss_type="l2"
     ):
     batch_size = noisy_observation.shape[0]
     image_shape = (batch_size, image_channels, image_dim, image_dim)
@@ -44,13 +56,40 @@ def run_diffusion(
                 model_output = model_output.sample if model_type == "diffusers" else model_output[:, :3]
                 x_0 = (image - beta_prod_t_prev ** (0.5) * model_output) / alpha_prod_t_prev ** (0.5)
 
-                distance = operator(x_0) - noisy_observation
-                if (distance ** 2).mean() < noise_function.sigma ** 2:
-                    break
-                loss = ((distance) ** 2).mean()
-                print(loss.mean())
-                loss.mean().backward()
+                if loss_type == "l2" and noise_function.name == "gaussian":
+                    distance = operator(x_0) - noisy_observation
+                    if (distance ** 2).mean() < noise_function.sigma ** 2:
+                        break
+                    loss = ((distance) ** 2).mean()
+                    print(f"L2 loss {loss}")
+                    loss.backward()
 
-            image -= 15 / torch.linalg.norm(image.grad) * image.grad
+                elif loss_type == "kl" and noise_function.name == "gaussian":
+                    diff = (operator(x_0) - noisy_observation)  # Residuals
+                    kl_div = compute_kl_gaussian(diff, noise_function.sigma)
+                    kl_div.backward()
+
+                elif loss_type == "kl" and noise_function.name == "poisson":
+                    residuals = (operator(x_0) * noise_function.rate - noisy_observation * noise_function.rate) * 127.5  # Residuals
+                    x_0_pixel = operator((x_0 + 1) * 127.5)
+                    mask = x_0_pixel > 2 # Avoid numeric issues with pixel values near 0
+                    pearson = residuals[mask] / torch.sqrt(x_0_pixel[mask] * noise_function.rate)
+                    pearson_flat = pearson.view(-1)
+                    kl_div = compute_kl_gaussian(pearson_flat, 1.0)
+                    kl_div.backward()
+
+                elif loss_type == "categorical_kl" and noise_function.name == "bimodal":
+                    diff = (operator(x_0) - noisy_observation)
+                    indices = operator(torch.ones(image.shape).to(device))
+                    diff = diff[indices > 0]  # Don't consider masked out pixels in the distribution
+                    empirical_distribution = noise_function.sample_noise_distribution(image).to(device).view(-1)
+                    loss = discrete_kl_loss(diff, empirical_distribution, num_bins=15)
+                    print(f"Categorical KL {loss}")
+                    loss.backward()
+
+                else:
+                    raise ValueError(f"Unsupported combination: loss {loss_type} noise {noise_function.name}")
+
+            image -= 5 / torch.linalg.norm(image.grad) * image.grad
 
     return image

@@ -58,3 +58,18 @@ class PoissonNoise(Noise):
         data = data * 2.0 - 1.0
         data = data.clamp(-1, 1)
         return data.to(device)
+
+
+@register_noise(name='bimodal')
+class BimodalNoise(Noise):
+    def __init__(self, value):
+        self.value = value
+        self.name = 'bimodal'
+
+    def __call__(self, data):
+        noise = self.sample_noise_distribution(data)
+        return data + noise.to(data.device)
+
+    def sample_noise_distribution(self, data):
+        return (torch.randint(low=0, high=2, size=data.shape) * 2 - 1) * self.value
+
