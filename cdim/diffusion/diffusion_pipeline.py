@@ -90,6 +90,7 @@ def run_diffusion(
                 else:
                     raise ValueError(f"Unsupported combination: loss {loss_type} noise {noise_function.name}")
 
-            image -= 5 / torch.linalg.norm(image.grad) * image.grad
+            image -= 10 / torch.linalg.norm(image.grad) * image.grad
+            image = image.detach().requires_grad_()
 
     return image

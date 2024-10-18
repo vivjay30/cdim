@@ -23,3 +23,5 @@ def get_operator(name: str, **kwargs):
 from .random_box_masker import RandomBoxMasker
 from .random_pixel_masker import RandomPixelMasker
 from .identity_operator import IdentityOperator
+from .super_resolution_operator import SuperResolutionOperator
+from .gaussian_blur_operator import GaussianBlurOperator
