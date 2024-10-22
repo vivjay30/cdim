@@ -28,7 +28,7 @@ def load_image(path):
     # Resize if needed
     original_image = np.array(original_image.resize((256, 256), Image.BICUBIC))
     original_image = torch.from_numpy(original_image).unsqueeze(0).permute(0, 3, 1, 2)
-    return (original_image / 127.5 - 1.0).to(torch.float)
+    return (original_image / 127.5 - 1.0).to(torch.float)[:, :3]
     
 
 def load_yaml(file_path: str) -> dict:
@@ -110,7 +110,7 @@ if __name__ == '__main__':
         choices=['gradnorm', 'expected_gradnorm'],
         default='expected_gradnorm')
     parser.add_argument("--lambda-val", type=float,
-        default=None)
+        default=None, help="Constant to scale learning rate. Leave empty to use a heuristic best guess.")
     parser.add_argument("--output-dir", default=".", type=str)
     parser.add_argument("--loss", type=str,
         choices=['l2', 'kl', 'categorical_kl'], default='l2',
