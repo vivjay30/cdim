@@ -1,7 +1,8 @@
 import json
 
 class EtaScheduler:
-    def __init__(self, method, task, T, K, loss_type, lambda_val=None):
+    def __init__(self, method, task, T, K, loss_type,
+                       noise_function, lambda_val=None):
         self.task = task
         self.T = T
         self.K = K
@@ -10,10 +11,18 @@ class EtaScheduler:
         self.method = method
 
         self.precomputed_etas = self._load_precomputed_etas()
+
         # Couldn't find expected gradnorm
         if not self.precomputed_etas and method == "expected_gradnorm":
             self.method = "gradnorm"
             print("Etas for this configuration not found. Switching to gradnorm.")
+
+
+        # Precomputed gradients are only for gaussian noise
+        if noise_function.name != "gaussian" and method == "expected_gradnorm":
+            self.method = "gradnorm"
+            print("Precomputed gradients are only for gaussian noise. Switching to gradnorm.")
+
 
         # Get the best lambda_val if it's not passed
         if self.lambda_val is None:

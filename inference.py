@@ -17,7 +17,6 @@ from cdim.diffusion.scheduling_ddim import DDIMScheduler
 from cdim.diffusion.diffusion_pipeline import run_diffusion
 from cdim.eta_scheduler import EtaScheduler
 
-# torch.manual_seed(7)
 
 def load_image(path):
     """
@@ -83,7 +82,7 @@ def main(args):
     save_to_image(noisy_measurement, os.path.join(args.output_dir, "noisy_measurement.png"))
 
     eta_scheduler = EtaScheduler(args.eta_type, operator.name, args.T,
-        args.K, args.loss, args.lambda_val)
+        args.K, args.loss, noise_function, args.lambda_val)
 
     t0 = time.time()
     output_image = run_diffusion(
