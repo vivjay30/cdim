@@ -15,8 +15,9 @@ from cdim.image_utils import save_to_image
 from cdim.dps_model.dps_unet import create_model
 from cdim.diffusion.scheduling_ddim import DDIMScheduler
 from cdim.diffusion.diffusion_pipeline import run_diffusion
+from cdim.eta_scheduler import EtaScheduler
 
-torch.manual_seed(8)
+# torch.manual_seed(7)
 
 def load_image(path):
     """
@@ -81,10 +82,14 @@ def main(args):
     noisy_measurement = noise_function(operator(original_image))
     save_to_image(noisy_measurement, os.path.join(args.output_dir, "noisy_measurement.png"))
 
+    eta_scheduler = EtaScheduler(args.eta_type, operator.name, args.T,
+        args.K, args.loss, args.lambda_val)
+
     t0 = time.time()
     output_image = run_diffusion(
         model, ddim_scheduler,
         noisy_measurement, operator, noise_function, device,
+        eta_scheduler,
         num_inference_steps=args.T,
         K=args.K,
         model_type=model_type,
@@ -101,6 +106,11 @@ if __name__ == '__main__':
     parser.add_argument("operator_config", type=str)
     parser.add_argument("noise_config", type=str)
     parser.add_argument("model_config", type=str)
+    parser.add_argument("--eta-type", type=str,
+        choices=['gradnorm', 'expected_gradnorm'],
+        default='expected_gradnorm')
+    parser.add_argument("--lambda-val", type=float,
+        default=None)
     parser.add_argument("--output-dir", default=".", type=str)
     parser.add_argument("--loss", type=str,
         choices=['l2', 'kl', 'categorical_kl'], default='l2',

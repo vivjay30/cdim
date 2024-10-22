@@ -23,6 +23,7 @@ def run_diffusion(
         operator,
         noise_function,
         device,
+        eta_scheduler,
         num_inference_steps: int = 1000,
         K=5,
         image_dim=256,
@@ -90,7 +91,8 @@ def run_diffusion(
                 else:
                     raise ValueError(f"Unsupported combination: loss {loss_type} noise {noise_function.name}")
 
-            image -= 10 / torch.linalg.norm(image.grad) * image.grad
+            step_size = eta_scheduler.get_step_size(str(t.item()), torch.linalg.norm(image.grad))
+            image -= step_size * image.grad
             image = image.detach().requires_grad_()
 
     return image
