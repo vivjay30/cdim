@@ -4,3 +4,4 @@ Pillow==11.0.0
 PyYAML==6.0.2
 scipy==1.14.1
 tqdm==4.66.5
+graio==5.3.0
