@@ -1,3 +1,10 @@
+title: Constrained Diffusion Implicit Models
+app_file: app.py
+pinned: true
+license: mit
+models:
+  - google/ddpm-celebahq-256
+
 # Constrained Diffusion Implicit Models
 ![alt text](Teaser.jpg)
 
