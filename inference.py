@@ -64,7 +64,7 @@ def main(args):
     else:
         # Huggingface diffusers model
         model_type = "diffusers"
-        model = DiffusionPipeline.from_pretrained(args.model_config).to("cuda").unet
+        model = DiffusionPipeline.from_pretrained(args.model_config).to(device).unet
 
     # All the models have the same scheduler.
     # you can change this for different models

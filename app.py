@@ -93,7 +93,7 @@ def run_restoration(data, T, K):
     # Initialize model if not already done
     if model is None:
         model_type = "diffusers"
-        model = DiffusionPipeline.from_pretrained("google/ddpm-celebahq-256").to("cuda").unet
+        model = DiffusionPipeline.from_pretrained("google/ddpm-celebahq-256").to(device).unet
             
         ddim_scheduler = DDIMScheduler(
             num_train_timesteps=1000, 
