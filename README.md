@@ -4,11 +4,9 @@
 ## Authors
 [Vivek Jayaram](http://www.vivekjayaram.com/), [John Thickstun](https://johnthickstun.com/), [Ira Kemelmacher-Shlizerman](https://homes.cs.washington.edu/~kemelmi/), and [Steve Seitz](https://homes.cs.washington.edu/~seitz/)
 
-## [Project Page](www.google.com)
-(Coming Soon)
+## [Project Page](https://grail.cs.washington.edu/projects/cdim/)
 
-### [Paper](www.google.com)
-(Coming Soon)
+### [Paper](https://arxiv.org/abs/2411.00359)
 
 ### Summary
 We solve noisy linear inverse problems with diffusion models. The method is fast and addresses many problems like inpainting, super-resolution, gaussian deblur, and poisson noise. 
