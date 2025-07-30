@@ -73,63 +73,50 @@ def randn_tensor(
 @torch.no_grad()
 def estimate_variance(
     operator: Callable[[Tensor], Tensor],
-    y: Tensor,                    # observation  (batch-less shape (m,))
+    y: Tensor,                    # Ax_0 + noise  (shape (m,))
     alphabar_t: float,
     in_shape: tuple[int, ...],    # e.g. (1, 3, 256, 256)
+    trace: float,                 # tr(AA^T)
+    sigma_y: float,
     n_trace_samples: int = 64,
     n_y_samples: int = 64,
     device: torch.device | str = "cuda",
     dtype: torch.dtype = torch.float32,
 ) -> float:
     """
-    Monte-Carlo estimator of  Var(||Ax_t - Ax_0||^2)  without access to A^T.
-
-    Parameters
-    ----------
-    operator        : callable x ↦ Ax
-    y               : tensor containing Ax_0  (flattened or same shape as operator output)
-    alphabar_t      : scalar ∈ (0,1)
-    in_shape        : shape of a single input sample accepted by `operator`
-    n_trace_samples : # samples for tr((AA^T)^2)
-    n_y_samples     : # samples for y^T AA^T y
-    device, dtype   : numerical settings
-
-    Returns
-    -------
-    variance_est : float
+    Monte-Carlo estimator of  Var(||A x_t – y||^2)  without access to A^T.
     """
     y = y.to(device=device, dtype=dtype).flatten()
+    m = y.numel()
 
-    # --- estimate T1 = tr((AA^T)^2) ------------------------------------------
-    t1_acc = 0.0
+    # ----------------  tr((AA^T)^2)
+    t1_acc = torch.zeros((), device=device, dtype=dtype)
     for _ in range(n_trace_samples):
         v = torch.randn(in_shape, device=device, dtype=dtype)
         w = torch.randn(in_shape, device=device, dtype=dtype)
+        s = torch.dot(operator(v).flatten(), operator(w).flatten())
+        t1_acc += s * s
+    T1 = t1_acc / n_trace_samples
 
-        Av = operator(v).flatten()
-        Aw = operator(w).flatten()
-
-        s = torch.dot(Av, Aw)          #  ⟨Av,Aw⟩
-        t1_acc += s * s                #  (⟨Av,Aw⟩)^2
-
-    T1 = t1_acc / n_trace_samples      # unbiased
-
-    # --- estimate T2 = y^T AA^T y -------------------------------------------
-    t2_acc = 0.0
+    # ----------------  y^T AA^T y
+    t2_acc = torch.zeros((), device=device, dtype=dtype)
     for _ in range(n_y_samples):
         v = torch.randn(in_shape, device=device, dtype=dtype)
-        Av = operator(v).flatten()
-        s = torch.dot(y, Av)           #  ⟨y,Av⟩
+        s = torch.dot(y, operator(v).flatten())
         t2_acc += s * s
+    T2 = t2_acc / n_y_samples
 
-    T2 = t2_acc / n_y_samples          # unbiased
+    # ----------------  assemble variance
+    alpha_bar = torch.as_tensor(alphabar_t, dtype=dtype, device=device)
+    sigma2     = torch.as_tensor(sigma_y**2,  dtype=dtype, device=device)
 
-    # --- assemble the variance formula --------------------------------------
-    a = torch.sqrt(torch.as_tensor(alphabar_t, dtype=dtype, device=device)) - 1.0
-    b = 1.0 - alphabar_t
+    a2 = (torch.sqrt(alpha_bar) - 1.0).pow(2)  # (1-√ᾱ)^2
+    b  = 1.0 - alpha_bar                       # (1-ᾱ)
 
-    variance = (2 * b * b * T1) + (4 * a * a * b * T2)
-    return variance.item()
+    var = 2 * (b*b * T1 + 2 * b * sigma2 * trace + m * sigma2.pow(2)) \
+        + 4 * a2 * (b * (T2 - sigma2 * trace) + sigma2 * (y.pow(2).sum() - m * sigma2))
+    return var.item()
+
 
 
 def trace_AAt(

@@ -68,19 +68,19 @@ def run_diffusion(
             target_distance += noisy_observation.numel() * noise_function.sigma**2*(1-a**2)
             actual_distance = (torch.linalg.norm(operator(image) - noisy_observation) ** 2).item()            
             variance = estimate_variance(
-                operator, noisy_observation,
+                operator,
+                noisy_observation,
                 scheduler.alphas_cumprod[t-t_skip],
                 image.shape,
+                trace=trace,
+                sigma_y=noise_function.sigma,
                 n_trace_samples=64,
                 n_y_samples=64,
                 device=image.device)
             # print(variance_Axt_minus_y_sq(operator, noisy_observation, scheduler.alphas_cumprod[t-t_skip]))
             print(f"Target Distance max {target_distance + variance**0.5} actual distance {actual_distance}")
-
-            import pdb
-            pdb.set_trace()
             print(((1 - scheduler.alphas_cumprod[t-t_skip])**0.5)/scheduler.alphas_cumprod[t-t_skip])
-            if actual_distance <= target_distance + 0.25*variance**0.5:
+            if actual_distance <= target_distance + variance**0.5:
                 print("BREAKING")
                 break
 
