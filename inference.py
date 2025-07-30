@@ -17,6 +17,8 @@ from cdim.diffusion.scheduling_ddim import DDIMScheduler
 from cdim.diffusion.diffusion_pipeline import run_diffusion
 from cdim.eta_scheduler import EtaScheduler
 
+torch.manual_seed(3)
+np.random.seed(3)
 
 def load_image(path):
     """
@@ -92,7 +94,8 @@ def main(args):
         num_inference_steps=args.T,
         K=args.K,
         model_type=model_type,
-        loss_type=args.loss)
+        loss_type=args.loss,
+        original_image=original_image)
     print(f"total time {time.time() - t0}")
 
     save_to_image(output_image, os.path.join(args.output_dir, "output.png"))

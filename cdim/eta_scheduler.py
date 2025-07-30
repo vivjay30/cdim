@@ -1,4 +1,5 @@
 import json
+import torch
 
 class EtaScheduler:
     def __init__(self, method, task, T, K, loss_type,
@@ -59,3 +60,52 @@ class EtaScheduler:
         else:
             raise ValueError(f"Please provide learning rate for loss type {self.loss_type}")
 
+
+def calculate_best_step_size(image, y, operator, gradient, target_distance, initial_guess,
+                             max_iters=20, tol=1e-4, bracket_factor=1.4):
+    def compute_distance(eta):
+        x_new = image - eta * gradient
+        diff = operator(x_new) - y
+        return torch.linalg.norm(diff)**2
+
+    def objective(eta):
+        return torch.abs(compute_distance(eta) - target_distance)
+
+    # Try to bracket the root
+    eta_low = initial_guess / bracket_factor
+    eta_high = initial_guess * bracket_factor
+
+    for _ in range(10):
+        dist_low = compute_distance(eta_low)
+        dist_high = compute_distance(eta_high)
+        if (dist_low - target_distance) * (dist_high - target_distance) < 0:
+            break
+        eta_low /= bracket_factor
+        eta_high *= bracket_factor
+    else:
+        # Fallback: brute-force line search over eta to minimize distance
+        best_eta = None
+        best_val = float('inf')
+        for eta in torch.linspace(0, initial_guess * 5, steps=100, device=image.device):
+            val = objective(eta)
+            # print(f"ETA {eta} distance {compute_distance(eta)}")
+            if val < best_val:
+                best_val = val
+                best_eta = eta
+        return best_eta.item()
+
+    # Binary search
+    for _ in range(max_iters):
+        eta_mid = (eta_low + eta_high) / 2
+        dist_mid = compute_distance(eta_mid)
+        error = dist_mid - target_distance
+
+        if abs(error) < tol:
+            return eta_mid
+
+        if (compute_distance(eta_low) - target_distance) * error < 0:
+            eta_high = eta_mid
+        else:
+            eta_low = eta_mid
+
+    return eta_mid
