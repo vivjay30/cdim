@@ -2,6 +2,7 @@ import argparse
 import os
 import yaml
 import time
+from pathlib import Path
 
 from PIL import Image
 import numpy as np
@@ -17,8 +18,8 @@ from cdim.diffusion.scheduling_ddim import DDIMScheduler
 from cdim.diffusion.diffusion_pipeline import run_diffusion
 from cdim.eta_scheduler import EtaScheduler
 
-torch.manual_seed(3)
-np.random.seed(3)
+# torch.manual_seed(3)
+# np.random.seed(3)
 
 def load_image(path):
     """
@@ -38,13 +39,40 @@ def load_yaml(file_path: str) -> dict:
     return config
 
 
+def process_image(image_path, output_dir, model, ddim_scheduler, operator, noise_function, 
+                 device, eta_scheduler, args, model_type):
+    """
+    Process a single image with the given model and parameters
+    """
+    original_image = load_image(image_path).to(device)
+    
+    # Get the base filename without extension
+    base_name = Path(image_path).stem
+    
+    noisy_measurement = noise_function(operator(original_image))
+    save_to_image(noisy_measurement, os.path.join(output_dir, f"{base_name}_noisy_measurement.png"))
+
+    t0 = time.time()
+    output_image = run_diffusion(
+        model, ddim_scheduler,
+        noisy_measurement, operator, noise_function, device,
+        eta_scheduler,
+        num_inference_steps=args.T,
+        K=args.K,
+        model_type=model_type,
+        loss_type=args.loss,
+        original_image=original_image)
+    print(f"Processing time for {base_name}: {time.time() - t0:.2f}s")
+
+    save_to_image(output_image, os.path.join(output_dir, f"{base_name}_output.png"))
+
+
 def main(args):
     device_str = f"cuda" if args.cuda and torch.cuda.is_available() else 'cpu'
     print(f"Using device {device_str}")
     device = torch.device(device_str) 
 
     os.makedirs(args.output_dir, exist_ok=True)
-    original_image = load_image(args.input_image).to(device)
 
     # Load the noise function
     noise_config = load_yaml(args.noise_config)
@@ -80,29 +108,26 @@ def main(args):
         steps_offset=0,
     )
 
-    noisy_measurement = noise_function(operator(original_image))
-    save_to_image(noisy_measurement, os.path.join(args.output_dir, "noisy_measurement.png"))
-
     eta_scheduler = EtaScheduler(args.eta_type, operator.name, args.T,
         args.K, args.loss, noise_function, args.lambda_val)
 
-    t0 = time.time()
-    output_image = run_diffusion(
-        model, ddim_scheduler,
-        noisy_measurement, operator, noise_function, device,
-        eta_scheduler,
-        num_inference_steps=args.T,
-        K=args.K,
-        model_type=model_type,
-        loss_type=args.loss,
-        original_image=original_image)
-    print(f"total time {time.time() - t0}")
-
-    save_to_image(output_image, os.path.join(args.output_dir, "output.png"))
+    # Process all images in the input directory
+    input_dir = Path(args.input_folder)
+    image_files = [f for f in input_dir.iterdir() if f.suffix.lower() in ['.png', '.jpg', '.jpeg']]
+    
+    print(f"Found {len(image_files)} images to process")
+    
+    for image_file in image_files:
+        print(f"Processing {image_file.name}...")
+        process_image(
+            str(image_file), args.output_dir, model, ddim_scheduler,
+            operator, noise_function, device, eta_scheduler, args, model_type
+        )
+        break
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("input_image", type=str)
+    parser.add_argument("input_folder", type=str, help="Folder containing input images")
     parser.add_argument("T", type=int)
     parser.add_argument("K", type=int)
     parser.add_argument("operator_config", type=str)

@@ -77,11 +77,11 @@ def run_diffusion(
                 n_trace_samples=64,
                 n_y_samples=64,
                 device=image.device)
+
             # print(variance_Axt_minus_y_sq(operator, noisy_observation, scheduler.alphas_cumprod[t-t_skip]))
             print(f"Target Distance max {target_distance + variance**0.5} actual distance {actual_distance}")
             print(((1 - scheduler.alphas_cumprod[t-t_skip])**0.5)/scheduler.alphas_cumprod[t-t_skip])
             if actual_distance <= target_distance + variance**0.5:
-                print("BREAKING")
                 break
 
 
@@ -167,6 +167,10 @@ def run_diffusion(
             #     print(f"L2 loss After {torch.linalg.norm(operator(x_0) - noisy_observation)}")
 
             k += 1
+
+        print("Step", t.item())
+        print("Distance", 1 / noisy_observation.numel() * (torch.linalg.norm(operator(image) - noisy_observation).item() **2))
+        print("MAE", (torch.abs(operator(image) - noisy_observation).mean().item()))
 
     print(f"TOTAL_UPDATE_STEPS {TOTAL_UPDATE_STEPS}")
     return image
