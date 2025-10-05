@@ -33,3 +33,4 @@ from .random_pixel_masker import RandomPixelMasker
 from .identity_operator import IdentityOperator
 from .super_resolution_operator import SuperResolutionOperator
 from .gaussian_blur_operator import GaussianBlurOperator
+from .phase_retrieval_operator import PhaseRetrievalOperator

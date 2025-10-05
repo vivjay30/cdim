@@ -134,27 +134,27 @@ def calculate_best_step_size(
         of the quadratic (closest possible distance, still ≥ target).
     3.  If A is non-linear we fall back to a safe 1-D Brent-style search.
     """
-    # ---- analytic branch (A assumed linear) ----------------------------
-    r = operator(image)   - y           # residual  r = A x − y
-    s = operator(gradient)              # search-dir in meas. space  s = A g
-    a = torch.sum(r * r)                # ||r||²
-    b = torch.sum(r * s)                # rᵀ s
-    c = torch.sum(s * s) + 1e-12        # ||s||²   (ε avoids div-by-zero)
+    # # ---- analytic branch (A assumed linear) ----------------------------
+    # r = operator(image)   - y           # residual  r = A x − y
+    # s = operator(gradient)              # search-dir in meas. space  s = A g
+    # a = torch.sum(r * r)                # ||r||²
+    # b = torch.sum(r * s)                # rᵀ s
+    # c = torch.sum(s * s) + 1e-12        # ||s||²   (ε avoids div-by-zero)
 
-    # Solve  c η² - 2 b η + (a - target) = 0
-    disc = b * b - c * (a - target_distance)
-    if disc >= 0:
-        sqrt_disc = torch.sqrt(disc)
-        roots = [(b - sqrt_disc) / c, (b + sqrt_disc) / c]
-        roots = [η for η in roots if η >= 0]
-        if roots:                        # pick the root closest to the guess
-            return float(min(roots, key=lambda η: abs(η - initial_guess)))
+    # # Solve  c η² - 2 b η + (a - target) = 0
+    # disc = b * b - c * (a - target_distance)
+    # if disc >= 0:
+    #     sqrt_disc = torch.sqrt(disc)
+    #     roots = [(b - sqrt_disc) / c, (b + sqrt_disc) / c]
+    #     roots = [η for η in roots if η >= 0]
+    #     if roots:                        # pick the root closest to the guess
+    #         return float(min(roots, key=lambda η: abs(η - initial_guess)))
 
-    # No positive real root → take the minimiser η* = b / c (projects to ≥0)
-    eta_star = max(b / c, torch.zeros(1, device=image.device))
-    # If the function really is quadratic, eta_star already minimises it:
-    if disc >= 0:                        # analytic branch but no +ve root
-        return float(eta_star)
+    # # No positive real root → take the minimiser η* = b / c (projects to ≥0)
+    # eta_star = max(b / c, torch.zeros(1, device=image.device))
+    # # If the function really is quadratic, eta_star already minimises it:
+    # if disc >= 0:                        # analytic branch but no +ve root
+    #     return float(eta_star)
 
     # ---- generic fall-back (A non-linear) ------------------------------
     def distance(η: torch.Tensor) -> torch.Tensor:

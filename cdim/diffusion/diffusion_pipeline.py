@@ -1,7 +1,7 @@
 import torch
 from tqdm import tqdm
 
-from cdim.image_utils import randn_tensor, trace_AAt, estimate_variance, save_to_image
+from cdim.image_utils import randn_tensor, trace_AAt, estimate_variance, save_to_image, forward_moments_nonlinear
 from cdim.discrete_kl_loss import discrete_kl_loss
 from cdim.eta_scheduler import calculate_best_step_size
 
@@ -64,24 +64,35 @@ def run_diffusion(
         while k < K:
             if t <= 0: break
             a = scheduler.alphas_cumprod[t-t_skip]**0.5 - 1
-            target_distance = ((scheduler.alphas_cumprod[t-t_skip]**0.5-1)**2 * torch.linalg.norm(noisy_observation)**2 + (1 - scheduler.alphas_cumprod[t-t_skip]) * trace).item()
-            target_distance += noisy_observation.numel() * noise_function.sigma**2*(1-a**2)
+            # target_distance = ((scheduler.alphas_cumprod[t-t_skip]**0.5-1)**2 * torch.linalg.norm(noisy_observation)**2 + (1 - scheduler.alphas_cumprod[t-t_skip]) * trace).item()
+            # target_distance += noisy_observation.numel() * noise_function.sigma**2*(1-a**2)
             actual_distance = (torch.linalg.norm(operator(image) - noisy_observation) ** 2).item()            
-            variance = estimate_variance(
-                operator,
-                noisy_observation,
-                scheduler.alphas_cumprod[t-t_skip],
-                image.shape,
-                trace=trace,
-                sigma_y=noise_function.sigma,
-                n_trace_samples=64,
-                n_y_samples=64,
-                device=image.device)
+            # variance = estimate_variance(
+            #     operator,
+            #     noisy_observation,
+            #     scheduler.alphas_cumprod[t-t_skip],
+            #     image.shape,
+            #     trace=trace,
+            #     sigma_y=noise_function.sigma,
+            #     n_trace_samples=64,
+            #     n_y_samples=64,
+            #     device=image.device)
+
+            noise_std = (1.0 - scheduler.alphas_cumprod[t-t_skip]).sqrt()
+
+            with torch.no_grad():
+                model_output = model(image, (t - t_skip).unsqueeze(0).to(device))
+                model_output = model_output.sample if model_type == "diffusers" else model_output[:, :3]
+                x_0 = (image - beta_prod_t_prev ** (0.5) * model_output) / alpha_prod_t_prev ** (0.5)
+
+            target_distance, variance = forward_moments_nonlinear(
+                        x_hat0=x_0, alphabar=alpha_prod_t_prev,
+                        operator=operator, y=noisy_observation)
 
             # print(variance_Axt_minus_y_sq(operator, noisy_observation, scheduler.alphas_cumprod[t-t_skip]))
             print(f"Target Distance max {target_distance + variance**0.5} actual distance {actual_distance}")
             print(((1 - scheduler.alphas_cumprod[t-t_skip])**0.5)/scheduler.alphas_cumprod[t-t_skip])
-            if actual_distance <= target_distance + variance**0.5:
+            if actual_distance <= target_distance + 1.0 * variance**0.5:
                 break
 
 
@@ -91,7 +102,7 @@ def run_diffusion(
                 model_output = model_output.sample if model_type == "diffusers" else model_output[:, :3]
                 x_0 = (image - beta_prod_t_prev ** (0.5) * model_output) / alpha_prod_t_prev ** (0.5)
 
-                # save_to_image(x_0, f"intermediates/{t}_x0.png")
+                save_to_image(x_0, f"intermediates/{t}_x0.png")
                 if loss_type == "l2" and noise_function.name == "gaussian":
                     distance = operator(x_0) - noisy_observation
                     # if (distance ** 2).mean() < noise_function.sigma ** 2:
@@ -152,7 +163,7 @@ def run_diffusion(
                 # if step_size < initial_guess_step_size:
                 #     print("HEEEEEEREEEEE")
                 # step_size = initial_guess_step_size
-                # step_size = min(step_size, initial_guess_step_size)
+                step_size = min(step_size, initial_guess_step_size * 10)
             print(f"Step Size {step_size} initial guess {initial_guess_step_size}")
             if step_size <= 0.0001: break
             image -= step_size * image.grad

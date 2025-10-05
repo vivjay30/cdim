@@ -5,6 +5,7 @@ from torch import Tensor
 from torchvision.transforms import ToPILImage
 from typing import Callable
 
+
 def save_to_image(tensor, filename):
     """
     Saves a torch tensor to an image.
@@ -207,4 +208,79 @@ def trace_AAt(
 
 
 
+# new file: cdim/moments.py
+import torch
+from torch import Tensor
+from typing import Callable
 
+def hessian_traces(x_hat0, grad_g, operator, y, n_probe=4):
+    """
+    Returns   tr(H)   and   tr(H²)   for g(x)=‖A(x)-y‖²
+    using Hutchinson probing.
+    Requires grad_g (∇g) already computed w.r.t. x_hat0.
+    """
+    tr_H  = 0.0
+    tr_H2 = 0.0
+    for _ in range(n_probe):
+        v   = torch.randn_like(x_hat0)
+        Hv  = torch.autograd.grad(
+                  grad_g, x_hat0, v,
+                  retain_graph=True, create_graph=True)[0]
+        tr_H  += (v * Hv).flatten(start_dim=1).sum(dim=1).mean()
+        tr_H2 += (Hv.flatten(start_dim=1).pow(2).sum(dim=1)).mean()
+    tr_H  /= n_probe
+    tr_H2 /= n_probe
+    return tr_H, tr_H2
+
+
+def jacobian_energy(x_hat0, operator, y, n_probe=8):
+    """
+    Returns trace(J_r J_rᵀ) for r(x)=A(x)-y  via Hutchinson.
+    """
+    tr_JJ = 0.0
+    r0    = operator(x_hat0) - y                # (B, …)
+    for _ in range(n_probe):
+        v      = torch.randn_like(r0)           # probe in *measurement* space
+        # Jᵀ v  = grad_{x} ⟨r(x), v⟩
+        JTv    = torch.autograd.grad(
+                     r0, x_hat0, v,
+                     retain_graph=True,
+                     create_graph=False)[0]
+        tr_JJ += JTv.flatten(start_dim=1).pow(2).sum(dim=1).mean()
+    return tr_JJ / n_probe
+
+
+@torch.enable_grad()
+def forward_moments_nonlinear(
+    x_hat0  : Tensor,
+    alphabar: float,
+    operator, y: Tensor,
+    n_probe : int = 32
+) -> tuple[float, float]:
+    """
+    First-order mean  +  first- & second-order variance.
+    """
+    # detach to cut old graph, then re-enable grad
+    x_hat0 = x_hat0.detach().requires_grad_(True)
+
+    # 0-th order residual & scalar loss
+    r0 = operator(x_hat0) - y
+    g0 = (r0.flatten(start_dim=1).pow(2).sum(dim=1)).mean()   # scalar
+
+    # --------- Jacobian energy (dominant mean term) ----------
+    tr_JJ = jacobian_energy(x_hat0, operator, y, n_probe=n_probe)
+
+    mu = g0 + (1 - alphabar) * tr_JJ          # Eq. above
+    mu = torch.clamp(mu, min=0.0)             # keep it ≥ 0
+
+    # --------- variance:   first-order + ½ second-order -----------
+    grad_g = torch.autograd.grad(g0, x_hat0, create_graph=True)[0]
+
+    # Hessian traces for 2-nd order variance correction
+    tr_H , tr_H2 = hessian_traces(           # same helper as previous reply
+        x_hat0, grad_g, operator, y, n_probe=n_probe)
+
+    var = ((1 - alphabar) *
+           grad_g.flatten(start_dim=1).pow(2).sum(dim=1).mean()
+          +0.5 * (1 - alphabar)**2 * (2 * tr_H2 + tr_H**2))
+    return mu.item(), var.item()
