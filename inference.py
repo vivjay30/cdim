@@ -18,8 +18,8 @@ from cdim.diffusion.scheduling_ddim import DDIMScheduler
 from cdim.diffusion.diffusion_pipeline import run_diffusion
 from cdim.eta_scheduler import EtaScheduler
 
-# torch.manual_seed(3)
-# np.random.seed(3)
+torch.manual_seed(3)
+np.random.seed(3)
 
 def load_image(path):
     """
@@ -114,6 +114,7 @@ def main(args):
     # Process all images in the input directory
     input_dir = Path(args.input_folder)
     image_files = [f for f in input_dir.iterdir() if f.suffix.lower() in ['.png', '.jpg', '.jpeg']]
+    image_files = sorted(image_files)
     
     print(f"Found {len(image_files)} images to process")
     
@@ -123,7 +124,7 @@ def main(args):
             str(image_file), args.output_dir, model, ddim_scheduler,
             operator, noise_function, device, eta_scheduler, args, model_type
         )
-        break
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
