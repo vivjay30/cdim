@@ -54,6 +54,9 @@ def run_diffusion(
         model_output = model(image, t.unsqueeze(0).to(device))
         model_output = model_output.sample if model_type == "diffusers" else model_output[:, :3]
 
+        # Single time
+        # save_to_image(image, f"intermediates/{t}_xt.png")
+
         # 2. compute previous image: x_t -> x_t-1
         image = scheduler.step(model_output, t, image).prev_sample
         image.requires_grad_()
@@ -78,10 +81,11 @@ def run_diffusion(
                 n_y_samples=64,
                 device=image.device)
 
+            threshold = 0.5 * variance**0.5
             # print(variance_Axt_minus_y_sq(operator, noisy_observation, scheduler.alphas_cumprod[t-t_skip]))
-            print(f"Target Distance max {target_distance + variance**0.5} actual distance {actual_distance}")
-            print(((1 - scheduler.alphas_cumprod[t-t_skip])**0.5)/scheduler.alphas_cumprod[t-t_skip])
-            if actual_distance <= target_distance + variance**0.5:
+            print(f"Target Distance mean {target_distance} max {target_distance + threshold} actual distance {actual_distance}")
+            # print(((1 - scheduler.alphas_cumprod[t-t_skip])**0.5)/scheduler.alphas_cumprod[t-t_skip])
+            if actual_distance <= target_distance + threshold:
                 break
 
 
@@ -147,7 +151,7 @@ def run_diffusion(
             with torch.no_grad():
                 step_size = calculate_best_step_size(
                     image, noisy_observation, operator,
-                    image.grad, target_distance, initial_guess_step_size)
+                    image.grad, target_distance, threshold, initial_guess_step_size)
                 
                 # if step_size < initial_guess_step_size:
                 #     print("HEEEEEEREEEEE")
@@ -156,7 +160,8 @@ def run_diffusion(
             print(f"Step Size {step_size} initial guess {initial_guess_step_size}")
             if step_size <= 0.0001: break
             image -= step_size * image.grad
-            print(f"New distance {torch.linalg.norm(operator(image) - noisy_observation).item()}")
+            new_distance = torch.linalg.norm(operator(image) - noisy_observation).item() ** 2
+            print(f"New distance {new_distance}")
             image = image.detach().requires_grad_()
             TOTAL_UPDATE_STEPS += 1
 
@@ -167,6 +172,10 @@ def run_diffusion(
             #     print(f"L2 loss After {torch.linalg.norm(operator(x_0) - noisy_observation)}")
 
             k += 1
+
+            # Check here because threshold is stochastic and can change from iteration to iteration
+            if new_distance <= target_distance + threshold:
+                break
 
         print("Step", t.item())
         print("Distance", 1 / noisy_observation.numel() * (torch.linalg.norm(operator(image) - noisy_observation).item() **2))

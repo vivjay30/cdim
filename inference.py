@@ -18,8 +18,8 @@ from cdim.diffusion.scheduling_ddim import DDIMScheduler
 from cdim.diffusion.diffusion_pipeline import run_diffusion
 from cdim.eta_scheduler import EtaScheduler
 
-torch.manual_seed(3)
-np.random.seed(3)
+# torch.manual_seed(3)
+# np.random.seed(3)
 
 def load_image(path):
     """
@@ -111,24 +111,40 @@ def main(args):
     eta_scheduler = EtaScheduler(args.eta_type, operator.name, args.T,
         args.K, args.loss, noise_function, args.lambda_val)
 
-    # Process all images in the input directory
-    input_dir = Path(args.input_folder)
-    image_files = [f for f in input_dir.iterdir() if f.suffix.lower() in ['.png', '.jpg', '.jpeg']]
-    image_files = sorted(image_files)
+    # Process input (either a single image or all images in a directory)
+    input_path = Path(args.input)
     
-    print(f"Found {len(image_files)} images to process")
-    
-    for image_file in image_files:
-        print(f"Processing {image_file.name}...")
+    if input_path.is_file():
+        # Process a single image
+        print(f"Processing single image: {input_path.name}")
+        # torch.manual_seed(6)
+        # np.random.seed(6)
         process_image(
-            str(image_file), args.output_dir, model, ddim_scheduler,
+            str(input_path), args.output_dir, model, ddim_scheduler,
             operator, noise_function, device, eta_scheduler, args, model_type
         )
+    elif input_path.is_dir():
+        # Process all images in the directory
+        image_files = [f for f in input_path.iterdir() if f.suffix.lower() in ['.png', '.jpg', '.jpeg']]
+        image_files = sorted(image_files)
+        
+        print(f"Found {len(image_files)} images to process")
+        
+        for image_file in image_files:
+            print(f"Processing {image_file.name}...")
+            # torch.manual_seed(6)
+            # np.random.seed(6)
+            process_image(
+                str(image_file), args.output_dir, model, ddim_scheduler,
+                operator, noise_function, device, eta_scheduler, args, model_type
+            )
+    else:
+        raise ValueError(f"Input path '{input_path}' is neither a file nor a directory")
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("input_folder", type=str, help="Folder containing input images")
+    parser.add_argument("input", type=str, help="Path to input image or folder containing input images")
     parser.add_argument("T", type=int)
     parser.add_argument("K", type=int)
     parser.add_argument("operator_config", type=str)

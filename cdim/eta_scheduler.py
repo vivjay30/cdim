@@ -121,13 +121,14 @@ def calculate_best_step_size(
     operator,
     gradient: torch.Tensor,
     target_distance: float,
+    threshold: float,
     initial_guess: float,
     *,
     tol: float = 1e-4,
     max_iters: int = 30,
 ):
     """
-    Find η ≥ 0 that makes  ||A(x − η g) − y||²  ≈ target_distance.
+    Find the smallest η ≥ 0 that makes  ||A(x − η g) − y||²  ≈ target_distance + threshold.
 
     1.  If A is linear we solve the quadratic analytically.
     2.  If that has no positive real root we return the *minimiser*
@@ -141,14 +142,15 @@ def calculate_best_step_size(
     b = torch.sum(r * s)                # rᵀ s
     c = torch.sum(s * s) + 1e-12        # ||s||²   (ε avoids div-by-zero)
 
-    # Solve  c η² - 2 b η + (a - target) = 0
-    disc = b * b - c * (a - target_distance)
+    # Solve  c η² - 2 b η + (a - target_boundary) = 0 where target_boundary = target_distance + threshold
+    target_boundary = target_distance + threshold
+    disc = b * b - c * (a - target_boundary)
     if disc >= 0:
         sqrt_disc = torch.sqrt(disc)
         roots = [(b - sqrt_disc) / c, (b + sqrt_disc) / c]
         roots = [η for η in roots if η >= 0]
-        if roots:                        # pick the root closest to the guess
-            return float(min(roots, key=lambda η: abs(η - initial_guess)))
+        if roots:                        # pick the smallest positive root
+            return float(min(roots))
 
     # No positive real root → take the minimiser η* = b / c (projects to ≥0)
     eta_star = max(b / c, torch.zeros(1, device=image.device))
@@ -162,11 +164,11 @@ def calculate_best_step_size(
         diff = diff.flatten()            # 1-D vector
         return torch.dot(diff, diff)
 
-    def error(η):                        # signed error wrt target
-        return distance(η) - target_distance
+    def error(η):                        # signed error wrt target boundary
+        return distance(η) - target_boundary
 
-    # Initial bracket around the guess
-    eta_lo, eta_hi = initial_guess * 0.5, initial_guess * 1.5
+    # Initial bracket - start from 0 to find the smallest positive root
+    eta_lo, eta_hi = 0.0, initial_guess * 2.0
     best_eta, best_err = initial_guess, abs(error(torch.tensor(initial_guess)))
 
     # Expand until we either bracket a sign-change or hit max expansions
@@ -178,7 +180,8 @@ def calculate_best_step_size(
                 best_err, best_eta = abs(err), η
         if err_lo * err_hi < 0:          # sign change ⇒ root is bracketed
             break
-        eta_lo, eta_hi = eta_lo / 2, eta_hi * 2
+        # If we haven't bracketed yet, expand eta_hi (keep eta_lo at 0)
+        eta_hi = eta_hi * 2
     else:
         return float(best_eta)           # never bracketed ⇒ give best seen
 
