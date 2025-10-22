@@ -54,3 +54,31 @@ class RandomBoxMasker:
         
         # Apply the mask to the input tensor
         return tensor * self.mask
+    
+    def select(self, tensor):
+        """
+        Extract only the observed pixels from the tensor (pixels outside the box).
+        
+        Args:
+        tensor (torch.Tensor): Input tensor of shape (b, channels, height, width)
+        
+        Returns:
+        torch.Tensor: Flattened tensor containing only observed pixels (b, num_observed)
+        """
+        b, c, h, w = tensor.shape
+        assert c == self.channels and h == self.height and w == self.width, \
+            f"Input tensor must be of shape (b, {self.channels}, {self.height}, {self.width})"
+        
+        # Move the mask to the same device as the input tensor if necessary
+        if tensor.device != self.mask.device:
+            self.mask = self.mask.to(tensor.device)
+        
+        # Extract only observed pixels (where mask is 1, outside the box)
+        observed = (tensor * self.mask).flatten(1)  # (b, c*h*w)
+        # Keep only non-zero elements
+        mask_flat = self.mask.flatten(1)  # (1, c*h*w)
+        return observed[:, mask_flat[0] > 0]  # (b, num_observed)
+    
+    def get_num_observed(self):
+        """Return the number of observed elements."""
+        return int(self.mask.sum().item())

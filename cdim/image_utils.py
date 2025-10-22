@@ -85,8 +85,18 @@ def estimate_variance(
 ) -> float:
     """
     Monte-Carlo estimator of  Var(||A x_t – y||^2)  without access to A^T.
+    
+    Note: For inpainting operators with a 'select' method, this computes variance
+    over only the observed pixels.
     """
-    y = y.to(device=device, dtype=dtype).flatten()
+    use_select = hasattr(operator, 'select')
+    
+    # For inpainting, select only observed pixels from y
+    if use_select:
+        y_selected = operator.select(y).flatten()
+        y = y_selected.to(device=device, dtype=dtype)
+    else:
+        y = y.to(device=device, dtype=dtype).flatten()
     m = y.numel()
 
     # ----------------  tr((AA^T)^2)
@@ -94,7 +104,13 @@ def estimate_variance(
     for _ in range(n_trace_samples):
         v = torch.randn(in_shape, device=device, dtype=dtype)
         w = torch.randn(in_shape, device=device, dtype=dtype)
-        s = torch.dot(operator(v).flatten(), operator(w).flatten())
+        if use_select:
+            Av = operator.select(v).flatten()
+            Aw = operator.select(w).flatten()
+        else:
+            Av = operator(v).flatten()
+            Aw = operator(w).flatten()
+        s = torch.dot(Av, Aw)
         t1_acc += s * s
     T1 = t1_acc / n_trace_samples
 
@@ -102,7 +118,11 @@ def estimate_variance(
     t2_acc = torch.zeros((), device=device, dtype=dtype)
     for _ in range(n_y_samples):
         v = torch.randn(in_shape, device=device, dtype=dtype)
-        s = torch.dot(y, operator(v).flatten())
+        if use_select:
+            Av = operator.select(v).flatten()
+        else:
+            Av = operator(v).flatten()
+        s = torch.dot(y, Av)
         t2_acc += s * s
     T2 = t2_acc / n_y_samples
 
@@ -119,10 +139,48 @@ def estimate_variance(
 
 
 
+def compute_operator_distance(
+    operator: Callable[[Tensor], Tensor],
+    x: Tensor,
+    y: Tensor,
+    squared: bool = True
+) -> Tensor:
+    """
+    Compute ||Ax - y||^2 (or ||Ax - y|| if squared=False).
+    
+    For inpainting operators with a 'select' method, this computes the distance
+    over only the observed pixels. Otherwise uses the standard operator call.
+    
+    Args:
+        operator: The forward operator A
+        x: Input tensor (e.g., image)
+        y: Measurement tensor (for inpainting, this should be the full masked measurement)
+        squared: If True, returns squared L2 norm. If False, returns L2 norm.
+    
+    Returns:
+        Scalar tensor representing the distance
+    """
+    if hasattr(operator, 'select'):
+        # Use select method for inpainting operators
+        # Both x and y need to be selected to extract only observed pixels
+        Ax = operator.select(x).flatten()
+        y_selected = operator.select(y).flatten()
+    else:
+        # Standard operator application
+        Ax = operator(x).flatten()
+        y_selected = y.flatten()
+    
+    diff = Ax - y_selected
+    if squared:
+        return (diff ** 2).sum()
+    else:
+        return torch.sqrt((diff ** 2).sum())
+
+
 def trace_AAt(
     operator: Callable[[torch.Tensor], torch.Tensor],
     input_shape = (1, 3, 256, 256),
-    num_samples: int = 128,
+    num_samples: int = 256,
     device: str = "cuda"            # or "cpu"
 ) -> float:
     """
@@ -131,13 +189,21 @@ def trace_AAt(
     operator      : function that maps a (1,C,H,W) tensor → down-sampled tensor
     input_shape   : shape expected by the operator
     num_samples   : more samples → lower variance (error ≈ O(1/√num_samples))
+    
+    Note: For inpainting operators with a 'select' method, this computes the trace
+    over only the observed pixels, not the full tensor with zeros.
     """
     total = 0.0
+    use_select = hasattr(operator, 'select')
+    
     for _ in range(num_samples):
         # Rademacher noise (±1).  Use torch.randn for Gaussian instead.
         z = torch.empty(input_shape, device=device).bernoulli_().mul_(2).sub_(1)
-        Az = operator(z).flatten()          # output can have any shape
-        total += torch.dot(Az, Az).item()   # ||Az||²
+        if use_select:
+            Az = operator.select(z).flatten()   # only observed pixels
+        else:
+            Az = operator(z).flatten()          # output can have any shape
+        total += torch.dot(Az, Az).item()       # ||Az||²
     return total / num_samples
 
 

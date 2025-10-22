@@ -16,10 +16,9 @@ from cdim.image_utils import save_to_image
 from cdim.dps_model.dps_unet import create_model
 from cdim.diffusion.scheduling_ddim import DDIMScheduler
 from cdim.diffusion.diffusion_pipeline import run_diffusion
-from cdim.eta_scheduler import EtaScheduler
 
-# torch.manual_seed(3)
-# np.random.seed(3)
+torch.manual_seed(11)
+np.random.seed(11)
 
 def load_image(path):
     """
@@ -40,7 +39,7 @@ def load_yaml(file_path: str) -> dict:
 
 
 def process_image(image_path, output_dir, model, ddim_scheduler, operator, noise_function, 
-                 device, eta_scheduler, args, model_type):
+                 device, args, model_type):
     """
     Process a single image with the given model and parameters
     """
@@ -56,11 +55,10 @@ def process_image(image_path, output_dir, model, ddim_scheduler, operator, noise
     output_image = run_diffusion(
         model, ddim_scheduler,
         noisy_measurement, operator, noise_function, device,
-        eta_scheduler,
+        args.stopping_sigma,
         num_inference_steps=args.T,
         K=args.K,
         model_type=model_type,
-        loss_type=args.loss,
         original_image=original_image)
     print(f"Processing time for {base_name}: {time.time() - t0:.2f}s")
 
@@ -108,9 +106,6 @@ def main(args):
         steps_offset=0,
     )
 
-    eta_scheduler = EtaScheduler(args.eta_type, operator.name, args.T,
-        args.K, args.loss, noise_function, args.lambda_val)
-
     # Process input (either a single image or all images in a directory)
     input_path = Path(args.input)
     
@@ -121,7 +116,7 @@ def main(args):
         # np.random.seed(6)
         process_image(
             str(input_path), args.output_dir, model, ddim_scheduler,
-            operator, noise_function, device, eta_scheduler, args, model_type
+            operator, noise_function, device, args, model_type
         )
     elif input_path.is_dir():
         # Process all images in the directory
@@ -132,11 +127,11 @@ def main(args):
         
         for image_file in image_files:
             print(f"Processing {image_file.name}...")
-            # torch.manual_seed(6)
-            # np.random.seed(6)
+            torch.manual_seed(6)
+            np.random.seed(6)
             process_image(
                 str(image_file), args.output_dir, model, ddim_scheduler,
-                operator, noise_function, device, eta_scheduler, args, model_type
+                operator, noise_function, device, args, model_type
             )
     else:
         raise ValueError(f"Input path '{input_path}' is neither a file nor a directory")
@@ -146,20 +141,14 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("input", type=str, help="Path to input image or folder containing input images")
     parser.add_argument("T", type=int)
-    parser.add_argument("K", type=int)
+    parser.add_argument("K", type=int, help="Cap the number of steps K at any iteration. Helps with edge cases.")
     parser.add_argument("operator_config", type=str)
     parser.add_argument("noise_config", type=str)
     parser.add_argument("model_config", type=str)
-    parser.add_argument("--eta-type", type=str,
-        choices=['gradnorm', 'expected_gradnorm'],
-        default='expected_gradnorm')
+    parser.add_argument("--stopping-sigma", type=float, default=0.2, help="How many std deviations away to stop")
     parser.add_argument("--lambda-val", type=float,
         default=None, help="Constant to scale learning rate. Leave empty to use a heuristic best guess.")
     parser.add_argument("--output-dir", default=".", type=str)
-    parser.add_argument("--loss", type=str,
-        choices=['l2', 'kl', 'categorical_kl'], default='l2',
-        help="Algorithm to use. Options: 'l2', 'kl', 'categorical_kl'. Default is 'l2'."
-    )
     parser.add_argument("--cuda", default=True, action=argparse.BooleanOptionalAction)
 
     main(parser.parse_args())
