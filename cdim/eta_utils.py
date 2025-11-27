@@ -154,7 +154,8 @@ def calculate_best_step_size(
     
     # Phase 1: Coarse grid search to find promising regions
     # Search from very small to larger step sizes
-    max_eta = max(initial_guess * 10.0, 1.0)
+    # Allow step sizes larger than 1 if needed
+    max_eta = initial_guess * 200.0 if initial_guess > 0 else 10.0
     
     # Create a logarithmically-spaced grid for better coverage of small values
     # This ensures we search finely near 0 and coarser at larger values

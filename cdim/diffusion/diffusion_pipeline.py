@@ -44,14 +44,14 @@ def run_diffusion(
     TOTAL_UPDATE_STEPS = 0
     trace = trace_AAt(operator)
     for i, t in tqdm(enumerate(scheduler.timesteps), total=len(scheduler.timesteps), desc="Processing timesteps"):
-        # Using GT image noised for now       
+        # Using GT image noised up if you want to debug anything    
         # image = original_image * scheduler.alphas_cumprod[t] ** 0.5 + torch.randn_like(original_image) * (1 - scheduler.alphas_cumprod[t]) ** 0.5
 
          # 1. predict noise model_output
         model_output = model(image, t.unsqueeze(0).to(device))
         model_output = model_output.sample if model_type == "diffusers" else model_output[:, :3]
 
-        # Single time
+        # Save image for debugging
         # save_to_image(image, f"intermediates/{t}_xt.png")
 
         # 2. compute previous image: x_t -> x_t-1
@@ -66,9 +66,15 @@ def run_diffusion(
             a = scheduler.alphas_cumprod[t-t_skip]**0.5 - 1
             # For inpainting, use the number of observed pixels
             num_elements = operator.get_num_observed() if hasattr(operator, 'get_num_observed') else noisy_observation.numel()
+            
+            # mu_{t-delta}(y) e.q. 14
             target_distance = (a**2 * torch.linalg.norm(noisy_observation)**2 + (1 - scheduler.alphas_cumprod[t-t_skip]) * trace).item()
             target_distance += num_elements * noise_function.sigma**2*(1-a**2)
+            
+            # ||Ax_{t-delta} - y||^2
             actual_distance = compute_operator_distance(operator, image, noisy_observation, squared=True).item()            
+            
+            # sigma^2_{t-delta}(y) e.q. 15
             variance = estimate_variance(
                 operator,
                 noisy_observation,
@@ -80,14 +86,11 @@ def run_diffusion(
                 n_y_samples=64,
                 device=image.device)
 
-            # Can set a hard boundary here
-            # if t-t_skip == 0: target_distance = 0
-            # correction = torch.sqrt(1 - scheduler.alphas_cumprod[t-t_skip]) / scheduler.alphas_cumprod[t-t_skip]
-
-            # target_distance -= 2.0 * correction * num_elements / image.numel()
-
+            # c * sigma_{t-delta}(y)
             threshold = stopping_sigma * variance**0.5
-            print(f"Target Distance mean {target_distance} max {target_distance + threshold} actual distance {actual_distance}")
+            # print(f"Target Distance mean {target_distance} max {target_distance + threshold} actual distance {actual_distance}")
+            
+            # R_{t-delta} is within rho_{t-delta} e.q. 16
             if actual_distance <= target_distance + threshold:
                 break
 
@@ -98,10 +101,12 @@ def run_diffusion(
                 model_output = model_output.sample if model_type == "diffusers" else model_output[:, :3]
                 x_0 = (image - beta_prod_t_prev ** (0.5) * model_output) / alpha_prod_t_prev ** (0.5)
 
+                # Save Tweedie's estimate for debugging
                 # save_to_image(x_0, f"intermediates/{t}_x0.png")
+
                 loss = compute_operator_distance(operator, x_0, noisy_observation, squared=True).mean()
 
-                print(f"L2 loss {compute_operator_distance(operator, x_0, noisy_observation, squared=False)}")
+                # print(f"L2 loss {compute_operator_distance(operator, x_0, noisy_observation, squared=False)}")
                 data.append((t.item(), compute_operator_distance(operator, image, noisy_observation, squared=False).item()))
                 loss.backward()
 
@@ -110,21 +115,15 @@ def run_diffusion(
                 # Set debug=True to see detailed step size search information
                 step_size = calculate_best_step_size(image, noisy_observation, operator, image.grad, target_distance, threshold, initial_step_size, debug=False)
 
-            print(f"Step Size {step_size:.6e} initial guess {initial_step_size:.6e}")
+            # print(f"Step Size {step_size:.6e} initial guess {initial_step_size:.6e}")
 
             image -= step_size * image.grad
             new_distance = compute_operator_distance(operator, image, noisy_observation, squared=True).item()
-            print(f"New distance {new_distance}")
+            # print(f"New distance {new_distance}")
             image = image.detach().requires_grad_()
             TOTAL_UPDATE_STEPS += 1
 
             if step_size <= 1e-12: break
-
-            # with torch.no_grad():
-            #     model_output = model(image, (t - t_skip).unsqueeze(0).to(device))
-            #     model_output = model_output.sample if model_type == "diffusers" else model_output[:, :3]
-            #     x_0 = (image - beta_prod_t_prev ** (0.5) * model_output) / alpha_prod_t_prev ** (0.5)
-            #     print(f"L2 loss After {compute_operator_distance(operator, x_0, noisy_observation, squared=False)}")
 
             k += 1
 
@@ -132,17 +131,22 @@ def run_diffusion(
             if new_distance <= target_distance + threshold:
                 break
 
-        print("Step", t.item())
+        # print("Step", t.item())
         # Use num_elements for proper normalization with inpainting
         num_elements = operator.get_num_observed() if hasattr(operator, 'get_num_observed') else noisy_observation.numel()
-        print("Distance", 1 / num_elements * compute_operator_distance(operator, image, noisy_observation, squared=True).item())
+        # print("Distance", 1 / num_elements * compute_operator_distance(operator, image, noisy_observation, squared=True).item())
+        
+        # Print MAE if you want to track contraint error
         if hasattr(operator, 'select'):
             # Compute MAE over observed pixels only
             Ax = operator.select(image).flatten()
             y_selected = operator.select(noisy_observation).flatten()
-            print("MAE", (torch.abs(Ax - y_selected).mean().item()))
+            # print("MAE", (torch.abs(Ax - y_selected).mean().item()))
         else:
-            print("MAE", (torch.abs(operator(image) - noisy_observation).mean().item()))
+            pass
+            # print("MAE", (torch.abs(operator(image) - noisy_observation).mean().item()))
 
-    print(f"TOTAL_UPDATE_STEPS {TOTAL_UPDATE_STEPS}")
+    print(f"Total Denoising {len(scheduler.timesteps)}")
+    print(f"Total Projection Steps {TOTAL_UPDATE_STEPS}")
+    print(f"Total NFEs {TOTAL_UPDATE_STEPS + len(scheduler.timesteps)}")
     return image

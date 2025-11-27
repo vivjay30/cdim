@@ -166,3 +166,5 @@ cython_debug/
 *.pt
 *.png
 *.jps
+
+._*
