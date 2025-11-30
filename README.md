@@ -1,12 +1,11 @@
 # Linearly Constrained Diffusion Implicit Models
 ![alt text](Teaser.jpg)
 
-## Authors
+### Authors
 [Vivek Jayaram](http://www.vivekjayaram.com/), [John Thickstun](https://johnthickstun.com/), [Ira Kemelmacher-Shlizerman](https://homes.cs.washington.edu/~kemelmi/), and [Steve Seitz](https://homes.cs.washington.edu/~seitz/)
 
-### [Gradio Demo](https://huggingface.co/spaces/vivjay30/cdim)
-### [Project Page](https://grail.cs.washington.edu/projects/cdim/)
-### [Paper](https://arxiv.org/abs/2411.00359)
+### Links
+[[Gradio Demo]](https://huggingface.co/spaces/vivjay30/cdim) [[Project Page]](https://grail.cs.washington.edu/projects/cdim/) [[Paper]](https://arxiv.org/abs/2411.00359)
 
 ### Summary
 We solve noisy linear inverse problems with diffusion models. The method is fast and addresses many problems like inpainting, super-resolution, gaussian deblur, and poisson noise. 
@@ -46,9 +45,6 @@ pip install torch==2.4.1+cu124 torchvision-0.19.1+cu124 --extra-index-url https:
  
 #### LSUN Churches Gaussian Deblur Example (T'=25 Denoising Steps)
 `python inference.py sample_images/lsun_church.png 25 operator_configs/gaussian_blur_config.yaml noise_configs/gaussian_noise_config.yaml google/ddpm-church-256`
- 
-#### Poisson Noise Example
-`python inference.py sample_images/celebhq_29999.jpg 50 3 operator_configs/identity_operator_config.yaml noise_configs/poisson_noise_config.yaml google/ddpm-celebahq-256 --loss kl --eta-type gradnorm`
 
  
 ## FFHQ and Imagenet Models
