@@ -4,8 +4,8 @@
 ## Authors
 [Vivek Jayaram](http://www.vivekjayaram.com/), [John Thickstun](https://johnthickstun.com/), [Ira Kemelmacher-Shlizerman](https://homes.cs.washington.edu/~kemelmi/), and [Steve Seitz](https://homes.cs.washington.edu/~seitz/)
 
-## [Project Page](https://grail.cs.washington.edu/projects/cdim/)
-
+### [Gradio Demo](https://huggingface.co/spaces/vivjay30/cdim)
+### [Project Page](https://grail.cs.washington.edu/projects/cdim/)
 ### [Paper](https://arxiv.org/abs/2411.00359)
 
 ### Summary
