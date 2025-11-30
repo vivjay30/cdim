@@ -47,6 +47,9 @@ class PoissonNoise(Noise):
     def __init__(self, rate):
         self.rate = rate
         self.name = 'poisson'
+        # For compatibility with Gaussian code paths that check noise_function.sigma
+        # This is not used for Poisson - the actual variance is signal-dependent
+        self.sigma = None  # Signal that this is heteroscedastic noise
 
     def __call__(self, data):
         import numpy as np
@@ -58,6 +61,55 @@ class PoissonNoise(Noise):
         data = data * 2.0 - 1.0
         data = data.clamp(-1, 1)
         return data.to(device)
+    
+    def get_counts(self, y: torch.Tensor) -> torch.Tensor:
+        """
+        Convert observed measurement y (in [-1, 1] range) to count space.
+        
+        For Poisson noise, y was generated as:
+            y = poisson(x * 255 * rate) / (255 * rate)
+        So the expected count is:
+            count = y * 255 * rate
+        """
+        # Convert from [-1, 1] to [0, 1]
+        y_01 = (y + 1.0) / 2.0
+        # Convert to count space
+        counts = y_01 * 255.0 * self.rate
+        return counts
+    
+    def get_weights(self, y: torch.Tensor, eps: float = 1.0) -> torch.Tensor:
+        """
+        Compute Pearson weights W = 1 / Var(y) for each observation.
+        
+        For Poisson noise, Var(count) = count, so in the normalized space:
+            Var(y) = count / (255 * rate)^2
+        
+        The weight is the inverse variance. We add eps to avoid division by zero
+        for very dark pixels.
+        
+        Returns weights in the measurement space (normalized).
+        """
+        counts = self.get_counts(y)
+        # Variance in count space is the count itself
+        # Variance in normalized space is count / (255 * rate)^2
+        # Weight = 1 / Var = (255 * rate)^2 / count
+        scale = 255.0 * self.rate
+        weights = (scale ** 2) / (counts + eps)
+        return weights
+    
+    def sum_counts(self, y: torch.Tensor, operator=None) -> float:
+        """
+        Compute sum of counts (used in mean formula).
+        For Poisson, this is sum(y_counts) = sum((y+1)/2 * 255 * rate).
+        
+        If operator has 'select' method, only compute over observed pixels.
+        """
+        if operator is not None and hasattr(operator, 'select'):
+            y_selected = operator.select(y).flatten()
+        else:
+            y_selected = y.flatten()
+        counts = self.get_counts(y_selected)
+        return counts.sum().item()
 
 
 @register_noise(name='bimodal')

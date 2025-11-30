@@ -1,7 +1,10 @@
 import torch
 from tqdm import tqdm
 
-from cdim.image_utils import randn_tensor, trace_AAt, estimate_variance, save_to_image, compute_operator_distance
+from cdim.image_utils import (
+    randn_tensor, trace_AAt, estimate_variance, save_to_image, compute_operator_distance,
+    compute_pearson_energy, trace_weighted_AAt, estimate_poisson_variance, compute_poisson_target_distance
+)
 from cdim.discrete_kl_loss import discrete_kl_loss
 from cdim.eta_utils import calculate_best_step_size, initial_guess_step_size
 
@@ -42,7 +45,21 @@ def run_diffusion(
 
     data = []
     TOTAL_UPDATE_STEPS = 0
-    trace = trace_AAt(operator)
+    
+    # Check if we're using Poisson noise
+    is_poisson = noise_function.name == 'poisson'
+    
+    if is_poisson:
+        # For Poisson: compute weighted trace Tr(A^T W A)
+        trace = trace_weighted_AAt(
+            operator, noisy_observation, noise_function,
+            input_shape=image_shape, num_samples=256, device=device
+        )
+        print(f"[Poisson] Computed weighted trace Tr(A^T W A) = {trace:.2f}")
+    else:
+        # For Gaussian: standard trace Tr(A A^T)
+        trace = trace_AAt(operator)
+    
     for i, t in tqdm(enumerate(scheduler.timesteps), total=len(scheduler.timesteps), desc="Processing timesteps"):
         # Using GT image noised up if you want to debug anything    
         # image = original_image * scheduler.alphas_cumprod[t] ** 0.5 + torch.randn_like(original_image) * (1 - scheduler.alphas_cumprod[t]) ** 0.5
@@ -63,32 +80,56 @@ def run_diffusion(
         k = 0
         while k < K:
             if t <= 0: break
-            a = scheduler.alphas_cumprod[t-t_skip]**0.5 - 1
-            # For inpainting, use the number of observed pixels
-            num_elements = operator.get_num_observed() if hasattr(operator, 'get_num_observed') else noisy_observation.numel()
             
-            # mu_{t-delta}(y) e.q. 14
-            target_distance = (a**2 * torch.linalg.norm(noisy_observation)**2 + (1 - scheduler.alphas_cumprod[t-t_skip]) * trace).item()
-            target_distance += num_elements * noise_function.sigma**2*(1-a**2)
+            alphabar_t_prev = scheduler.alphas_cumprod[t-t_skip].item()
             
-            # ||Ax_{t-delta} - y||^2
-            actual_distance = compute_operator_distance(operator, image, noisy_observation, squared=True).item()            
-            
-            # sigma^2_{t-delta}(y) e.q. 15
-            variance = estimate_variance(
-                operator,
-                noisy_observation,
-                scheduler.alphas_cumprod[t-t_skip],
-                image.shape,
-                trace=trace,
-                sigma_y=noise_function.sigma,
-                n_trace_samples=64,
-                n_y_samples=64,
-                device=image.device)
+            if is_poisson:
+                # === POISSON NOISE: Use Pearson residuals ===
+                
+                # μ_t(y) - Expected Pearson residual energy
+                target_distance = compute_poisson_target_distance(
+                    noisy_observation, noise_function, operator,
+                    alphabar_t_prev, trace
+                )
+                
+                # R_t = Pearson residual energy ||P(Ax_t, y)||^2
+                actual_distance = compute_pearson_energy(
+                    operator, image, noisy_observation, noise_function
+                ).item()
+                
+                # σ^2_t(y) - Variance of Pearson residual energy
+                variance = estimate_poisson_variance(
+                    operator, noisy_observation, noise_function,
+                    alphabar_t_prev, image.shape, trace, device=image.device
+                )
+            else:
+                # === GAUSSIAN NOISE: Standard L2 distance ===
+                a = alphabar_t_prev**0.5 - 1
+                # For inpainting, use the number of observed pixels
+                num_elements = operator.get_num_observed() if hasattr(operator, 'get_num_observed') else noisy_observation.numel()
+                
+                # mu_{t-delta}(y) e.q. 14
+                target_distance = (a**2 * torch.linalg.norm(noisy_observation)**2 + (1 - alphabar_t_prev) * trace).item()
+                target_distance += num_elements * noise_function.sigma**2*(1-a**2)
+                
+                # ||Ax_{t-delta} - y||^2
+                actual_distance = compute_operator_distance(operator, image, noisy_observation, squared=True).item()            
+                
+                # sigma^2_{t-delta}(y) e.q. 15
+                variance = estimate_variance(
+                    operator,
+                    noisy_observation,
+                    alphabar_t_prev,
+                    image.shape,
+                    trace=trace,
+                    sigma_y=noise_function.sigma,
+                    n_trace_samples=64,
+                    n_y_samples=64,
+                    device=image.device)
 
             # c * sigma_{t-delta}(y)
             threshold = stopping_sigma * variance**0.5
-            # print(f"Target Distance mean {target_distance} max {target_distance + threshold} actual distance {actual_distance}")
+            print(f"Target Distance mean {target_distance} max {target_distance + threshold} actual distance {actual_distance}")
             
             # R_{t-delta} is within rho_{t-delta} e.q. 16
             if actual_distance <= target_distance + threshold:
@@ -104,7 +145,11 @@ def run_diffusion(
                 # Save Tweedie's estimate for debugging
                 # save_to_image(x_0, f"intermediates/{t}_x0.png")
 
-                loss = compute_operator_distance(operator, x_0, noisy_observation, squared=True).mean()
+                if is_poisson:
+                    # Use Pearson residual energy as the loss for Poisson
+                    loss = compute_pearson_energy(operator, x_0, noisy_observation, noise_function).mean()
+                else:
+                    loss = compute_operator_distance(operator, x_0, noisy_observation, squared=True).mean()
 
                 # print(f"L2 loss {compute_operator_distance(operator, x_0, noisy_observation, squared=False)}")
                 data.append((t.item(), compute_operator_distance(operator, image, noisy_observation, squared=False).item()))
@@ -113,12 +158,27 @@ def run_diffusion(
             initial_step_size = initial_guess_step_size(t.item(), torch.linalg.norm(image.grad)) # eta_scheduler.get_step_size(str(t.item()), torch.linalg.norm(image.grad))
             with torch.no_grad():
                 # Set debug=True to see detailed step size search information
-                step_size = calculate_best_step_size(image, noisy_observation, operator, image.grad, target_distance, threshold, initial_step_size, debug=False)
+                if is_poisson:
+                    # Create a distance function that uses Pearson residuals
+                    def poisson_distance_fn(op, x, y):
+                        return compute_pearson_energy(op, x, y, noise_function)
+                    step_size = calculate_best_step_size(
+                        image, noisy_observation, operator, image.grad,
+                        target_distance, threshold, initial_step_size,
+                        debug=False, distance_fn=poisson_distance_fn
+                    )
+                else:
+                    step_size = calculate_best_step_size(
+                        image, noisy_observation, operator, image.grad,
+                        target_distance, threshold, initial_step_size, debug=False
+                    )
 
-            # print(f"Step Size {step_size:.6e} initial guess {initial_step_size:.6e}")
-
+            print(f"Step Size {step_size:.6e} initial guess {initial_step_size:.6e}")
             image -= step_size * image.grad
-            new_distance = compute_operator_distance(operator, image, noisy_observation, squared=True).item()
+            if is_poisson:
+                new_distance = compute_pearson_energy(operator, image, noisy_observation, noise_function).item()
+            else:
+                new_distance = compute_operator_distance(operator, image, noisy_observation, squared=True).item()
             # print(f"New distance {new_distance}")
             image = image.detach().requires_grad_()
             TOTAL_UPDATE_STEPS += 1

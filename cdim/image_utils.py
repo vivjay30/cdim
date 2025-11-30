@@ -177,6 +177,232 @@ def compute_operator_distance(
         return torch.sqrt((diff ** 2).sum())
 
 
+def compute_pearson_energy(
+    operator: Callable[[Tensor], Tensor],
+    x: Tensor,
+    y: Tensor,
+    noise_function,
+    eps: float = 1.0,
+) -> Tensor:
+    """
+    Compute Pearson residual energy for Poisson noise:
+        R_t = sum_i (Ax[i] - y[i])^2 / Var(y[i])
+    
+    For Poisson noise, Var(y) is proportional to the expected count.
+    This "whitens" the heteroscedastic Poisson noise.
+    
+    Args:
+        operator: The forward operator A
+        x: Input tensor (e.g., image x_t)
+        y: Measurement tensor (noisy observation)
+        noise_function: The Poisson noise function with get_weights method
+        eps: Small constant to avoid division by zero for dark pixels
+    
+    Returns:
+        Scalar tensor representing the Pearson residual energy
+    """
+    if hasattr(operator, 'select'):
+        Ax = operator.select(x).flatten()
+        y_selected = operator.select(y).flatten()
+    else:
+        Ax = operator(x).flatten()
+        y_selected = y.flatten()
+    
+    # Get weights W = 1 / Var(y)
+    weights = noise_function.get_weights(y_selected.view_as(y_selected), eps=eps)
+    weights = weights.flatten()
+    
+    diff = Ax - y_selected
+    # Pearson residual: sum of (diff^2 * weight)
+    return (diff ** 2 * weights).sum()
+
+
+def trace_weighted_AAt(
+    operator: Callable[[torch.Tensor], torch.Tensor],
+    y: Tensor,
+    noise_function,
+    input_shape=(1, 3, 256, 256),
+    num_samples: int = 256,
+    device: str = "cuda",
+    eps: float = 1.0,
+) -> float:
+    """
+    Estimate tr(A^T W A) where W = diag(1/Var(y)) for Poisson noise.
+    
+    Uses Hutchinson's trace estimator:
+        tr(A^T W A) = E[z^T A^T W A z] where z ~ N(0, I)
+    
+    This is needed for the mean formula in Poisson CDIM.
+    """
+    use_select = hasattr(operator, 'select')
+    
+    # Get the weights for y
+    if use_select:
+        y_selected = operator.select(y).flatten()
+    else:
+        y_selected = y.flatten()
+    
+    weights = noise_function.get_weights(y_selected, eps=eps)
+    weights = weights.flatten().to(device=device)
+    
+    total = 0.0
+    for _ in range(num_samples):
+        z = torch.randn(input_shape, device=device)
+        if use_select:
+            Az = operator.select(z).flatten()
+        else:
+            Az = operator(z).flatten()
+        
+        # Compute z^T A^T W A z = (W^{1/2} A z)^T (W^{1/2} A z) = ||W^{1/2} A z||^2
+        weighted_Az = Az * torch.sqrt(weights)
+        total += torch.dot(weighted_Az, weighted_Az).item()
+    
+    return total / num_samples
+
+
+def compute_weighted_y_squared(
+    y: Tensor,
+    noise_function,
+    operator=None,
+    eps: float = 1.0,
+) -> float:
+    """
+    Compute Σ y² * W where W = 1/Var(y) for Poisson noise.
+    
+    This is the correct bias energy term for Pearson residuals:
+        Σ y[i]² * (255*rate)² / counts[i]
+    
+    NOT the same as Σ counts!
+    """
+    use_select = operator is not None and hasattr(operator, 'select')
+    
+    if use_select:
+        y_selected = operator.select(y).flatten()
+    else:
+        y_selected = y.flatten()
+    
+    # Get weights W = (255*rate)² / counts
+    weights = noise_function.get_weights(y_selected, eps=eps)
+    
+    # Compute y² * W and sum
+    y_sq_weighted = y_selected ** 2 * weights
+    return y_sq_weighted.sum().item()
+
+
+@torch.no_grad()
+def estimate_poisson_variance(
+    operator: Callable[[Tensor], Tensor],
+    y: Tensor,
+    noise_function,
+    alphabar_t: float,
+    in_shape: tuple[int, ...],
+    trace_AtWA: float,
+    device: torch.device | str = "cuda",
+    eps: float = 1.0,
+) -> float:
+    """
+    Estimate Var(R_t) for Pearson residual energy under Poisson noise.
+    
+    Uses the corrected formula that includes the non-centrality term:
+    
+        σ_t² ≈ 2N + 4(1-α̅_t) Tr(A^T W A) + 4(a-1)² Σ(y² * W)
+    
+    Where:
+        - N = number of observed pixels
+        - a = √α̅_t
+        - W = diag(1/Var(y)) = diag((255*rate)²/counts)
+        - Σ(y² * W) = weighted squared observation (the non-centrality parameter)
+    
+    The three terms represent:
+        1. Base variance of chi-squared with N degrees of freedom
+        2. Diffusion noise contribution
+        3. Non-centrality/bias variance (critical for high t)
+    """
+    use_select = hasattr(operator, 'select')
+    
+    if use_select:
+        y_selected = operator.select(y).flatten()
+    else:
+        y_selected = y.flatten()
+    
+    N = y_selected.numel()  # Number of observed pixels
+    
+    a = alphabar_t ** 0.5
+    b_sq = 1.0 - alphabar_t  # (1 - α̅_t)
+    
+    # Compute the weighted squared sum: Σ y² * W (non-centrality parameter)
+    y_sq_weighted = compute_weighted_y_squared(y, noise_function, operator, eps)
+    
+    # Three variance terms:
+    # 1. Base chi-squared variance: 2N
+    term1 = 2.0 * N
+    
+    # 2. Diffusion contribution: 4(1-α̅_t) Tr(A^T W A)
+    term2 = 4.0 * b_sq * trace_AtWA
+    
+    # 3. Non-centrality term: 4(a-1)² Σ(y² * W)
+    term3 = 4.0 * (a - 1.0) ** 2 * y_sq_weighted
+    
+    variance = term1 + term2 + term3
+    return variance
+
+
+def compute_poisson_target_distance(
+    y: Tensor,
+    noise_function,
+    operator,
+    alphabar_t: float,
+    trace_AtWA: float,
+    eps: float = 1.0,
+) -> float:
+    """
+    Compute the expected Pearson residual energy μ_t(y) for Poisson noise.
+    
+    μ_t = (a-1)² Σ(y² * W) + (1-α̅_t) Tr(A^T W A) + N
+    
+    Where:
+        - a = √α̅_t
+        - W = diag((255*rate)²/counts) = 1/Var(y)
+        - Σ(y² * W) = weighted squared observation (bias energy in whitened space)
+        - N = number of observed pixels
+        - Tr(A^T W A) = weighted trace
+    
+    The three terms represent:
+        1. Bias energy: signal attenuation from diffusion (in whitened space)
+        2. Diffusion noise energy: noise from the diffusion process
+        3. Measurement noise energy: baseline from Poisson measurement noise
+    
+    Note: The bias energy is Σ y² * W, NOT Σ counts! This is because in whitened
+    space, the squared bias is (Ax_0)² / Var(y) ≈ y² * W.
+    """
+    use_select = hasattr(operator, 'select')
+    
+    if use_select:
+        y_selected = operator.select(y).flatten()
+    else:
+        y_selected = y.flatten()
+    
+    N = y_selected.numel()
+    
+    a = alphabar_t ** 0.5
+    b_sq = 1.0 - alphabar_t
+    
+    # Compute weighted squared sum: Σ y² * W (correct bias energy term)
+    y_sq_weighted = compute_weighted_y_squared(y, noise_function, operator, eps)
+    
+    # Three mean terms:
+    # 1. Bias energy: (a-1)² Σ(y² * W)
+    term1 = (a - 1.0) ** 2 * y_sq_weighted
+    
+    # 2. Diffusion noise energy: (1-α̅_t) Tr(A^T W A)
+    term2 = b_sq * trace_AtWA
+    
+    # 3. Measurement noise energy: N (since Pearson residuals normalize by variance)
+    term3 = float(N)
+    
+    return term1 + term2 + term3
+
+
 def trace_AAt(
     operator: Callable[[torch.Tensor], torch.Tensor],
     input_shape = (1, 3, 256, 256),

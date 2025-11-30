@@ -132,9 +132,10 @@ def calculate_best_step_size(
     tol: float = 1e-4,
     max_iters: int = 50,
     debug: bool = False,
+    distance_fn=None,
 ):
     """
-    Find the smallest η ≥ 0 that makes  ||A(x − η g) − y||²  ≈ target_distance + threshold.
+    Find the smallest η ≥ 0 that makes  distance(x − η g)  ≈ target_distance + threshold.
 
     Uses a robust grid search followed by golden section search for fine-grained optimization.
     
@@ -143,11 +144,17 @@ def calculate_best_step_size(
     
     Args:
         debug: If True, prints detailed search information
+        distance_fn: Optional custom distance function. Should take (operator, x, y) and return
+                     a scalar distance. If None, uses L2 distance (compute_operator_distance).
+                     For Poisson noise, pass compute_pearson_energy to use Pearson residuals.
     """
     target_boundary = target_distance + threshold
     
     def distance(η: torch.Tensor) -> torch.Tensor:
-        return compute_operator_distance(operator, image - η * gradient, y, squared=True)
+        x_new = image - η * gradient
+        if distance_fn is not None:
+            return distance_fn(operator, x_new, y)
+        return compute_operator_distance(operator, x_new, y, squared=True)
 
     def error(η):
         return distance(η) - target_boundary
