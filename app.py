@@ -1,17 +1,12 @@
 import gradio as gr
 import torch
 import yaml
-import os
 import numpy as np
 from PIL import Image
-import time
 from cdim.noise import get_noise
 from cdim.operators import get_operator
-from cdim.image_utils import save_to_image
-from cdim.dps_model.dps_unet import create_model
 from cdim.diffusion.scheduling_ddim import DDIMScheduler
 from cdim.diffusion.diffusion_pipeline import run_diffusion
-from cdim.eta_scheduler import EtaScheduler
 from diffusers import DiffusionPipeline
 
 
@@ -81,7 +76,7 @@ def generate_noisy_image(image_choice, noise_sigma, operator_key):
     return noisy_image, data  # Return the noisy image and data for restoration
 
 
-def run_restoration(data, T, K):
+def run_restoration(data, T, stopping_sigma):
     """Run the restoration process and return the restored image."""
     global model, ddim_scheduler, model_type
 
@@ -103,10 +98,9 @@ def run_restoration(data, T, K):
         )
 
     # Run restoration
-    eta_scheduler = EtaScheduler("gradnorm", operator.name, T, K, 'l2', noise_function, None)
     output_image = run_diffusion(
         model, ddim_scheduler, noisy_measurement, operator, noise_function, device,
-        eta_scheduler, num_inference_steps=T, K=K, model_type=model_type, loss_type='l2'
+        stopping_sigma, num_inference_steps=T, model_type=model_type
     )
         
     # Convert output image for display
@@ -119,7 +113,7 @@ with gr.Blocks() as demo:
     
     with gr.Row():
         T = gr.Slider(10, 200, value=50, step=1, label="Number of Inference Steps (T)")
-        K = gr.Slider(1, 10, value=3, step=1, label="K Value")
+        stopping_sigma = gr.Slider(0.1, 5.0, value=0.1, step=0.1, label="Stopping Sigma (c)")
         noise_sigma = gr.Slider(0, 0.6, value=0.05, step=0.01, label="Noise Sigma")
     
     image_select = gr.Dropdown(
@@ -146,7 +140,7 @@ with gr.Blocks() as demo:
         outputs=[noisy_image, state],
     ).then(
         fn=run_restoration,
-        inputs=[state, T, K],
+        inputs=[state, T, stopping_sigma],
         outputs=restored_image
     )
 

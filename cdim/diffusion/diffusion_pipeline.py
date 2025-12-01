@@ -27,7 +27,7 @@ def run_diffusion(
         device,
         stopping_sigma,
         num_inference_steps: int = 1000,
-        K=5,
+        K=20,
         image_dim=256,
         image_channels=3,
         model_type="diffusers",
